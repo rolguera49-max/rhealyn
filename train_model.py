@@ -1,10 +1,12 @@
 # train_model.py
-# Part 1: retrieve the UCI Student Performance data (Mathematics file only)
-# Part 2: preprocess, train, evaluate and save a Random Forest model
+# Retrieve the UCI Student Performance data (Mathematics file only),
+# preprocess it, train a Random Forest, evaluate it and save the model.
+# Run directly:  python train_model.py
+# app.py also imports train() and calls it automatically if files are missing.
 import io
-import os
 import zipfile
 import urllib.request
+from pathlib import Path
 
 import pandas as pd
 import joblib
@@ -16,14 +18,14 @@ from sklearn.impute import SimpleImputer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, classification_report
 
-# ---------------------------------------------------------------
-# PART 1 - Retrieve and inspect the dataset (Activity A)
-# ---------------------------------------------------------------
+BASE = Path(__file__).parent
 URL = "https://archive.ics.uci.edu/static/public/320/student+performance.zip"
 MATH_FILE = "student-mat.csv"
+DATA_PATH = BASE / "student_data.csv"
+MODEL_PATH = BASE / "student_model.pkl"
 
 
-def read_math_csv(zf):
+def _read_math_from_zip(zf):
     """Find student-mat.csv in a zip (or in a zip nested inside it)."""
     for name in zf.namelist():
         if name.endswith(MATH_FILE):
@@ -31,77 +33,76 @@ def read_math_csv(zf):
     for name in zf.namelist():
         if name.endswith(".zip"):
             with zipfile.ZipFile(io.BytesIO(zf.read(name))) as inner:
-                return read_math_csv(inner)
+                return _read_math_from_zip(inner)
     raise FileNotFoundError(MATH_FILE + " not found in the downloaded archive")
 
 
-if os.path.exists(MATH_FILE):
-    # Optional offline fallback: put student-mat.csv next to this script
-    df = pd.read_csv(MATH_FILE, sep=";")
-else:
+def load_raw_data():
+    """Use a local student-mat.csv if present, otherwise download from UCI."""
+    local = BASE / MATH_FILE
+    if local.exists():
+        return pd.read_csv(local, sep=None, engine="python")  # auto-detect ; or ,
     with urllib.request.urlopen(URL, timeout=60) as response:
         archive = zipfile.ZipFile(io.BytesIO(response.read()))
-    df = read_math_csv(archive)
+    return _read_math_from_zip(archive)
 
-# Remove duplicates BEFORE saving so the app and the model use the same records
-df = df.drop_duplicates()
-df.to_csv("student_data.csv", index=False)
 
-print("Rows and columns:", df.shape)
-print(df.head())
-print(df.dtypes)
-print("Missing values per column:")
-print(df.isnull().sum())
+def train():
+    # ---------- Activity A: retrieve and inspect ----------
+    df = load_raw_data()
+    df = df.drop_duplicates()  # before saving, so app and model use same records
+    df.to_csv(DATA_PATH, index=False)
 
-# ---------------------------------------------------------------
-# PART 2 - Preprocess, train and evaluate (Activity B)
-# ---------------------------------------------------------------
-# Target: 1 = at risk (G3 < 10); 0 = not at risk
-y = (df["G3"] < 10).astype(int)
+    print("Rows and columns:", df.shape)
+    print(df.head())
+    print(df.dtypes)
+    print("Missing values per column:")
+    print(df.isnull().sum())
 
-# Never use G3 as a predictor
-X = df.drop(columns=["G3"])
+    # ---------- Activity B: preprocess, train, evaluate ----------
+    y = (df["G3"] < 10).astype(int)          # 1 = at risk, 0 = not at risk
+    X = df.drop(columns=["G3"])              # never use G3 as a predictor
 
-numeric_cols = X.select_dtypes(include="number").columns.tolist()
-categorical_cols = X.select_dtypes(exclude="number").columns.tolist()
+    numeric_cols = X.select_dtypes(include="number").columns.tolist()
+    categorical_cols = X.select_dtypes(exclude="number").columns.tolist()
 
-numeric_pipe = Pipeline([
-    ("imputer", SimpleImputer(strategy="median")),
-    ("scaler", StandardScaler()),
-])
+    numeric_pipe = Pipeline([
+        ("imputer", SimpleImputer(strategy="median")),
+        ("scaler", StandardScaler()),
+    ])
+    categorical_pipe = Pipeline([
+        ("imputer", SimpleImputer(strategy="most_frequent")),
+        ("encoder", OneHotEncoder(handle_unknown="ignore")),
+    ])
+    preprocessor = ColumnTransformer([
+        ("numeric", numeric_pipe, numeric_cols),
+        ("categorical", categorical_pipe, categorical_cols),
+    ])
 
-categorical_pipe = Pipeline([
-    ("imputer", SimpleImputer(strategy="most_frequent")),
-    ("encoder", OneHotEncoder(handle_unknown="ignore")),
-])
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.20, random_state=42, stratify=y
+    )
 
-preprocessor = ColumnTransformer([
-    ("numeric", numeric_pipe, numeric_cols),
-    ("categorical", categorical_pipe, categorical_cols),
-])
+    model = Pipeline([
+        ("preprocessor", preprocessor),
+        ("classifier", RandomForestClassifier(
+            n_estimators=100, random_state=42, class_weight="balanced"
+        )),
+    ])
+    model.fit(X_train, y_train)
+    predictions = model.predict(X_test)
 
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.20, random_state=42, stratify=y
-)
+    print("Accuracy:", round(accuracy_score(y_test, predictions), 3))
+    print(classification_report(
+        y_test, predictions,
+        target_names=["Not at risk", "At risk"],
+        zero_division=0,
+    ))
 
-model = Pipeline([
-    ("preprocessor", preprocessor),
-    ("classifier", RandomForestClassifier(
-        n_estimators=100,
-        random_state=42,
-        class_weight="balanced",
-    )),
-])
+    joblib.dump(model, MODEL_PATH)
+    print("Saved", MODEL_PATH.name)
+    return model
 
-model.fit(X_train, y_train)
-predictions = model.predict(X_test)
 
-print("Accuracy:", round(accuracy_score(y_test, predictions), 3))
-print(classification_report(
-    y_test, predictions,
-    target_names=["Not at risk", "At risk"],
-    zero_division=0,
-))
-
-joblib.dump(model, "student_model.pkl")
-print("Saved student_model.pkl")
+if __name__ == "__main__":
+    train()

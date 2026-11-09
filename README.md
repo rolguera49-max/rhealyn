@@ -26,6 +26,10 @@ streamlit run app.py       # opens http://localhost:8501
 ```
 Use the "Download sample input CSV" button in the app to test uploads.
 
+`app.py` creates `student_model.pkl` and `student_data.csv` automatically on
+first run if they are missing (for example on Streamlit Cloud). If the dataset
+download fails, the app lets you upload `student-mat.csv` instead.
+
 ## Limitations
 - Trained on one Portuguese secondary-school dataset; it may not generalize to
   other institutions or populations.

@@ -3,16 +3,36 @@ import streamlit as st
 import pandas as pd
 import joblib
 
+from train_model import train, BASE, DATA_PATH, MODEL_PATH, MATH_FILE
+
 st.set_page_config(page_title="Student Predict", page_icon="🎓", layout="wide")
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner="Preparing the model (first run only, about a minute)...")
 def load_model():
-    return joblib.load("student_model.pkl")
+    # Create the data and model files if they are missing (e.g. not on GitHub)
+    if not (MODEL_PATH.exists() and DATA_PATH.exists()):
+        train()
+    return joblib.load(MODEL_PATH)
 
 
-model = load_model()
-data = pd.read_csv("student_data.csv")
+try:
+    model = load_model()
+    data = pd.read_csv(DATA_PATH)
+except Exception as error:
+    st.title("🎓 Student Performance Prediction")
+    st.error(f"Could not prepare the model automatically: {error}")
+    st.write(
+        "The dataset download may have failed. Download the UCI Student "
+        "Performance zip, then upload **student-mat.csv** (the Mathematics "
+        "file) here."
+    )
+    fallback = st.file_uploader("Upload student-mat.csv", type=["csv"])
+    if fallback is not None:
+        (BASE / MATH_FILE).write_bytes(fallback.getvalue())
+        st.cache_resource.clear()
+        st.rerun()
+    st.stop()
 
 st.title("🎓 Student Performance Prediction")
 st.caption("Classroom prototype for academic risk exploration (G3 < 10 = AT RISK)")
